@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+pydantic[email]
+python-dotenv
+groq
+pdfplumber
+python-docx
+pandas
+numpy
+scikit-learn
+nltk
+spacy
+requests
