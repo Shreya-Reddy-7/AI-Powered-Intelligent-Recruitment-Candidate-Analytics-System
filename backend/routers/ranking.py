@@ -97,23 +97,26 @@ def build_rankings(job, resumes, limit=None):
             "experience_score": score_data.get("experience_score", 0),
             "education_score": score_data.get("education_score", 0),
             "matched_skills": score_data.get("matched_skills", []),
-            "match_percentage": round(
-                (len(score_data.get("matched_skills", [])) / max(len(parsed["skills"]), 1)) * 100,
-                2
-            ),
+           "match_percentage": round(
+            (len(score_data.get("matched_skills", [])) / max(len(score_data.get("job_skills", [])), 1)) * 100,
+            2
+        ),
             "analysis": analysis
         })
 
     ranked = sorted(results, key=lambda x: x["score"], reverse=True)
+
     if limit is not None:
         ranked = ranked[:limit]
 
-    for index, row in enumerate(ranked):
-        if index == 0:
+    for row in ranked:
+        score = row["score"]
+
+        if score >= 70:
             row["badge"] = "Gold"
-        elif index == 1:
+        elif score >= 60:
             row["badge"] = "Silver"
-        elif index == 2:
+        elif score >= 45:
             row["badge"] = "Bronze"
         else:
             row["badge"] = "Participant"

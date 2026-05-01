@@ -75,48 +75,71 @@ def parse_storage_list(value):
 
 
 def generate_candidate_analysis(parsed, score_data=None):
+
     skills = safe_list(parsed.get("skills", []))
     exp = parsed.get("experience_years", 0)
 
     if score_data:
         matched = safe_list(score_data.get("matched_skills", []))
         score = score_data.get("score", 0)
-        missing = [skill for skill in skills if skill not in matched]
+        job_skills = safe_list(score_data.get("job_skills", []))
+        missing = list(set(job_skills) - set(skills))
     else:
-        matched = []
-        missing = []
-        score = None
+        matched, missing, score = [], [], None
 
+    # -----------------------------
+    # BACKEND DECISION (SOURCE OF TRUTH)
+    # -----------------------------
+    if score is not None:
+        if score >= 75:
+            verdict = "Strong Fit"
+        elif score >= 50:
+            verdict = "Moderate Fit"
+        else:
+            verdict = "Weak Fit"
+    else:
+        verdict = "Potential"
+
+    # -----------------------------
+    # FALLBACK (NO LLM)
+    # -----------------------------
     if not groq_client:
         return {
-            "strengths": ["Basic skills identified"],
-            "weaknesses": ["Limited analysis (LLM disabled)"],
-            "improvements": ["Add more projects"],
+            "strengths": matched if matched else skills[:3],
+            "weaknesses": ["Lack of experience"] if exp == 0 else [],
+            "skill_gaps": missing,
+            "improvements": ["Work on real-world projects"],
             "score": score,
-            "summary": "Basic evaluation.",
-            "verdict": "Neutral",
-            "selection_reason": "No LLM available",
-            "ranking_reason": "Fallback mode"
+            "summary": "Candidate meets some requirements but needs improvement.",
+            "verdict": verdict,
+            "selection_reason": "Evaluation based on available data",
+            "ranking_reason": "Ranked based on overall score"
         }
 
     try:
         prompt = f"""
-You are a senior recruiter.
+You are a senior recruiter evaluating a candidate.
 
-Skills: {skills}
-Experience: {exp}
+Candidate Skills: {skills}
+Experience: {exp} years
 Matched Skills: {matched}
 Missing Skills: {missing}
 Score: {score}
+Verdict: {verdict}
+
+INSTRUCTIONS:
+- DO NOT change the verdict
+- Use the data above strictly
+- Be specific and realistic (no generic sentences)
+- Do NOT mention technologies not in missing_skills
+- Weaknesses should be real issues (experience, gaps, depth)
 
 Return ONLY JSON:
 {{
   "strengths": [],
   "weaknesses": [],
   "improvements": [],
-  "score": {score},
   "summary": "",
-  "verdict": "",
   "selection_reason": "",
   "ranking_reason": ""
 }}
@@ -129,22 +152,55 @@ Return ONLY JSON:
 
         content = response.choices[0].message.content.strip()
         content = content.replace("```json", "").replace("```", "").strip()
+
         parsed_json = extract_json(content)
 
         if parsed_json:
+
+            # -----------------------------
+            # CLEAN OUTPUT
+            # -----------------------------
             parsed_json["strengths"] = clean_list(parsed_json.get("strengths", []))
             parsed_json["weaknesses"] = clean_list(parsed_json.get("weaknesses", []))
             parsed_json["improvements"] = clean_list(parsed_json.get("improvements", []))
 
-            if score_data:
-                if score >= 75:
-                    parsed_json["verdict"] = "Strong Fit"
-                elif score >= 50:
-                    parsed_json["verdict"] = "Moderate Fit"
+            # -----------------------------
+            # ENSURE SUMMARY EXISTS
+            # -----------------------------
+            if not parsed_json.get("summary"):
+                if matched:
+                    parsed_json["summary"] = (
+                        f"Candidate has strengths in {', '.join(matched[:3])}, "
+                        "but needs improvement in experience and missing skills."
+                    )
                 else:
-                    parsed_json["verdict"] = "Weak Fit"
-            else:
-                parsed_json["score"] = None
+                    parsed_json["summary"] = "Candidate has potential but needs improvement."
+
+            # -----------------------------
+            # SAFETY: REMOVE INVALID WEAKNESSES
+            # -----------------------------
+            parsed_json["weaknesses"] = [
+                w for w in parsed_json["weaknesses"]
+                if w.lower() not in [s.lower() for s in skills]
+            ]
+
+            # -----------------------------
+            # FINAL CONSISTENT OUTPUT
+            # -----------------------------
+            parsed_json["skill_gaps"] = missing
+            parsed_json["score"] = score
+            parsed_json["verdict"] = verdict
+
+            # fallback if LLM misses fields
+            if not parsed_json.get("selection_reason"):
+                parsed_json["selection_reason"] = (
+                    "Decision based on skill match, experience, and overall score"
+                )
+
+            if not parsed_json.get("ranking_reason"):
+                parsed_json["ranking_reason"] = (
+                    "Ranked relative to other candidates based on score"
+                )
 
             return parsed_json
 
@@ -152,18 +208,18 @@ Return ONLY JSON:
 
     except Exception as e:
         print("LLM ERROR:", e)
+
         return {
-            "strengths": ["Good foundational skills"],
-            "weaknesses": ["Needs more practical exposure"],
-            "improvements": ["Work on projects"],
+            "strengths": matched if matched else skills[:3],
+            "weaknesses": ["Lack of practical experience"] if exp == 0 else [],
+            "skill_gaps": missing,
+            "improvements": ["Work on real-world projects"],
             "score": score,
-            "summary": "Candidate shows potential but needs experience.",
-            "verdict": "Moderate Fit" if score_data else "Potential",
-            "selection_reason": "Skills present but lacks depth",
-            "ranking_reason": "Average compared to others"
+            "summary": "Candidate has potential but needs improvement.",
+            "verdict": verdict,
+            "selection_reason": "Evaluation based on available data",
+            "ranking_reason": "Ranked based on overall score"
         }
-
-
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_resume(
     file: UploadFile = File(...),
